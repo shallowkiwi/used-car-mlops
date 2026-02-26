@@ -24,7 +24,7 @@ model = LinearRegression()
 model.fit(X, y)
 
 # Save trained model
-with open("used_car_mlops/models/model.pkl", "wb") as f:
+with open("models/model.pkl", "wb") as f:
     pickle.dump(model, f)
 
 print("Model trained and saved successfully!")
