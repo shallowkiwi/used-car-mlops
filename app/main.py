@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from used_car_mlops.src.predict import predict_price
+from src.predict import predict_price
 
 app = FastAPI()
 
