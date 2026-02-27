@@ -1,5 +1,6 @@
 import pandas as pd
 import pickle
+<<<<<<< HEAD
 import os
 from datetime import datetime
 from sklearn.ensemble import RandomForestRegressor
@@ -15,10 +16,20 @@ data = {
     "mileage": [18, 20, 19, 21, 22, 17, 16, 15],
     "seats": [5, 5, 5, 5, 7, 5, 7, 5],
     "price": [500000, 600000, 650000, 750000, 800000, 900000, 1100000, 1300000]
+=======
+from sklearn.linear_model import LinearRegression
+
+# Creating a simple dataset
+data = {
+    "year": [2015, 2016, 2017, 2018, 2019],
+    "km_driven": [50000, 40000, 30000, 20000, 10000],
+    "price": [500000, 600000, 700000, 800000, 900000]
+>>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
 }
 
 df = pd.DataFrame(data)
 
+<<<<<<< HEAD
 X = df.drop("price", axis=1)
 y = df["price"]
 
@@ -40,3 +51,22 @@ with open("models/model.pkl", "wb") as f:
     pickle.dump(model, f)
 
 print("Model trained and versioned successfully!")
+=======
+# Features (inputs)
+X = df[["year", "km_driven"]]
+
+# Target (output)
+y = df["price"]
+
+# Create model
+model = LinearRegression()
+
+# Train model
+model.fit(X, y)
+
+# Save trained model
+with open("models/model.pkl", "wb") as f:
+    pickle.dump(model, f)
+
+print("Model trained and saved successfully!")
+>>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4

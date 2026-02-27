@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+<<<<<<< HEAD
 from pydantic import BaseModel
 from src.predict import predict_price
 from src.drift_detection import detect_drift
@@ -14,12 +15,18 @@ class CarFeatures(BaseModel):
     engine_size: float
     mileage: float
     seats: float
+=======
+from src.predict import predict_price
+
+app = FastAPI()
+>>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
 
 @app.get("/")
 def home():
     return {"message": "Used Car Price Prediction API Running"}
 
 @app.post("/predict")
+<<<<<<< HEAD
 def predict(data: CarFeatures):
 
     features = [
@@ -40,3 +47,9 @@ def predict(data: CarFeatures):
         "predicted_price": prediction,
         "drift_status": drift_status
     }
+=======
+def predict(data: dict):
+    features = list(data.values())
+    price = predict_price(features)
+    return {"predicted_price": price}
+>>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
