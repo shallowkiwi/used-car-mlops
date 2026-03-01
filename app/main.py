@@ -1,7 +1,7 @@
 import logging
 import os
 import pandas as pd
-import mlflow.pyfunc
+import pickle
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -17,11 +17,18 @@ app = FastAPI(title="Used Car Price Prediction API")
 
 
 # =========================================================
-# Load Production Model from MLflow
+# Load Production Model (Local Serialized Model)
 # =========================================================
 
-MODEL_URI = "models:/UsedCarPriceModel/Production"
-model = mlflow.pyfunc.load_model(MODEL_URI)
+MODEL_PATH = "models/model.pkl"
+
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(
+        "Model file not found. Please run training before starting the API."
+    )
+
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
 
 
 # =========================================================
@@ -73,12 +80,7 @@ def predict(data: CarFeatures):
     import json
     with open("logs/predictions.log", "a") as f:
         f.write(json.dumps(data.dict()) + "\n")
-    
 
-
- 
-
-    # Create DataFrame with EXACT training columns
     input_df = pd.DataFrame([{
         "year": data.year,
         "km_driven": data.km_driven,
@@ -90,7 +92,6 @@ def predict(data: CarFeatures):
         "seats": data.seats
     }])
 
-    # Enforce column order EXACTLY as training
     input_df = input_df[[
         "year",
         "km_driven",
@@ -102,10 +103,8 @@ def predict(data: CarFeatures):
         "seats"
     ]]
 
-    # Prediction
     prediction = model.predict(input_df)[0]
 
-    # Drift Detection
     drift_result = check_drift(data.dict())
 
     logging.info(f"Prediction: {prediction} | Drift: {drift_result}")
