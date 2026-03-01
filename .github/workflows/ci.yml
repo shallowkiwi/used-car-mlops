@@ -23,17 +23,17 @@ jobs:
 
     - name: Install dependencies
       run: |
-        cd used_car_mlops
+        
         pip install -r requirements.txt
 
     - name: Run training script
       run: |
-        cd used_car_mlops
+        
         python src/train.py
 
     - name: Build Docker Image
       run: |
-        cd used_car_mlops
+        
         docker build -t used-car-mlops .
 
     - name: Deploy to Kubernetes
