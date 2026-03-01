@@ -1,13 +1,9 @@
-<<<<<<< HEAD
 name: CI-CD Pipeline
-=======
 name: CI Pipeline
->>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
 
 on:
   push:
     branches: [ main ]
-<<<<<<< HEAD
 
 jobs:
   build-test-deploy:
@@ -39,7 +35,6 @@ jobs:
     - name: Deploy to Kubernetes
       run: |
         echo "kubectl apply -f k8s-deployment.yaml"
-=======
   pull_request:
     branches: [ main ]
 
@@ -64,4 +59,3 @@ jobs:
       - name: Run training script
         run: |
           python src/train.py
->>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
