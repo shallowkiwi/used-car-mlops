@@ -1,40 +1,8 @@
-name: CI-CD Pipeline
 name: CI Pipeline
 
 on:
   push:
     branches: [ main ]
-
-jobs:
-  build-test-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: Install dependencies
-      run: |
-        
-        pip install -r requirements.txt
-
-    - name: Run training script
-      run: |
-        
-        python src/train.py
-
-    - name: Build Docker Image
-      run: |
-        
-        docker build -t used-car-mlops .
-
-    - name: Deploy to Kubernetes
-      run: |
-        echo "kubectl apply -f k8s-deployment.yaml"
   pull_request:
     branches: [ main ]
 
@@ -43,19 +11,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run training script
+      - name: Verify Training Script
         run: |
           python src/train.py
+
+      - name: Build Docker Image
+        run: |
+          docker build -t used-car-mlops .
