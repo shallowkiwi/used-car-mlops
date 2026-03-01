@@ -2,6 +2,13 @@ import logging
 import os
 import pandas as pd
 import pickle
+import subprocess
+import sys
+import json
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -17,19 +24,17 @@ app = FastAPI(title="Used Car Price Prediction API")
 
 
 # =========================================================
-# Load Production Model (Local Serialized Model)
+# Load or Train Model
 # =========================================================
 
 MODEL_PATH = "models/model.pkl"
 
 if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(
-        "Model file not found. Please run training before starting the API."
-    )
+    print("Model not found. Training model inside container...")
+    subprocess.run([sys.executable, "src/train.py"], check=True)
 
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
-
 
 # =========================================================
 # Logging Setup
@@ -42,6 +47,33 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+
+# =========================================================
+# Automated Retraining Trigger
+# =========================================================
+
+def trigger_retraining():
+    global model
+
+    logging.warning("Drift detected. Starting retraining pipeline...")
+
+    try:
+        subprocess.run(
+            [sys.executable, "src/train.py"],
+            check=True
+        )
+
+        logging.info("Retraining completed successfully.")
+
+        # Reload updated model
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+
+        logging.info("New model loaded successfully.")
+
+    except Exception as e:
+        logging.error(f"Retraining failed: {e}")
 
 
 # =========================================================
@@ -77,7 +109,7 @@ def predict(data: CarFeatures):
 
     logging.info(f"Received input: {data.dict()}")
 
-    import json
+    # Log prediction input
     with open("logs/predictions.log", "a") as f:
         f.write(json.dumps(data.dict()) + "\n")
 
@@ -106,6 +138,10 @@ def predict(data: CarFeatures):
     prediction = model.predict(input_df)[0]
 
     drift_result = check_drift(data.dict())
+
+    # Automated Retraining Trigger
+    if drift_result["drift_detected"]:
+        trigger_retraining()
 
     logging.info(f"Prediction: {prediction} | Drift: {drift_result}")
 

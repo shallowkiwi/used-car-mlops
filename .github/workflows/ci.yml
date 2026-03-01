@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI-CD Pipeline
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-test:
+  build-test-and-push:
     runs-on: ubuntu-latest
 
     steps:
@@ -30,4 +30,12 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t used-car-mlops .
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/used-car-mlops:latest .
+
+      - name: Login to DockerHub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push Docker Image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/used-car-mlops:latest
