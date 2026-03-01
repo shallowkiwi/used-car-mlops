@@ -3,9 +3,8 @@ uvicorn
 scikit-learn
 pandas
 numpy
-<<<<<<< HEAD
 joblib
 evidently
 pytest
-=======
->>>>>>> c49679dfd936bc738dd1b4c49795b7daa9a40fd4
+mlflow
+
