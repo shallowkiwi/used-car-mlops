@@ -21,29 +21,45 @@ mlflow.set_tracking_uri("file:./mlruns")
 mlflow.set_experiment("Used Car Price Prediction")
 
 
+DATA_PATH = "data/raw/cardekho_dataset.csv"
+MODEL_PATH = "models/model.pkl"
+
+
 def train_model():
 
-    print("Starting training...")
+    print("Starting training with real dataset...")
 
     # -----------------------------
-    # Create dataset (your synthetic data)
+    # Load dataset
     # -----------------------------
-    data = {
-        "year": [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022],
-        "km_driven": [50000, 40000, 30000, 20000, 15000, 10000, 8000, 5000],
-        "fuel_type": [0, 1, 0, 1, 1, 0, 0, 1],
-        "transmission": [0, 1, 0, 1, 0, 1, 0, 1],
-        "owner_count": [1, 2, 1, 2, 1, 1, 1, 1],
-        "engine_size": [1200, 1500, 1300, 1600, 1400, 1800, 2000, 2200],
-        "mileage": [18, 20, 19, 21, 22, 17, 16, 15],
-        "seats": [5, 5, 5, 7, 5, 7, 5, 5],
-        "price": [500000, 600000, 650000, 750000, 800000, 900000, 1100000, 1300000]
-    }
+    if not os.path.exists(DATA_PATH):
+        raise FileNotFoundError(f"Dataset not found at {DATA_PATH}")
 
-    df = pd.DataFrame(data)
+    df = pd.read_csv(DATA_PATH)
 
-    X = df.drop("price", axis=1)
-    y = df["price"]
+    # -----------------------------
+    # Select only numeric features
+    # -----------------------------
+    selected_columns = [
+        "vehicle_age",
+        "km_driven",
+        "mileage",
+        "engine",
+        "max_power",
+        "seats",
+        "selling_price"
+    ]
+
+    df = df[selected_columns]
+
+    # Drop missing values
+    df = df.dropna()
+
+    # -----------------------------
+    # Split features & target
+    # -----------------------------
+    X = df.drop("selling_price", axis=1)
+    y = df["selling_price"]
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
@@ -68,7 +84,7 @@ def train_model():
     print(f"R2 Score: {r2}")
 
     # -----------------------------
-    # Log to MLflow (local)
+    # Log to MLflow
     # -----------------------------
     with mlflow.start_run():
 
@@ -83,7 +99,7 @@ def train_model():
     # -----------------------------
     os.makedirs("models", exist_ok=True)
 
-    with open("models/model.pkl", "wb") as f:
+    with open(MODEL_PATH, "wb") as f:
         pickle.dump(model, f)
 
     print("Model trained and saved successfully.")

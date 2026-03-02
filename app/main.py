@@ -30,11 +30,12 @@ app = FastAPI(title="Used Car Price Prediction API")
 MODEL_PATH = "models/model.pkl"
 
 if not os.path.exists(MODEL_PATH):
-    print("Model not found. Training model inside container...")
+    print("Model not found. Training model...")
     subprocess.run([sys.executable, "src/train.py"], check=True)
 
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
+
 
 # =========================================================
 # Logging Setup
@@ -66,7 +67,6 @@ def trigger_retraining():
 
         logging.info("Retraining completed successfully.")
 
-        # Reload updated model
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
 
@@ -77,17 +77,15 @@ def trigger_retraining():
 
 
 # =========================================================
-# Input Schema
+# Updated Input Schema
 # =========================================================
 
 class CarFeatures(BaseModel):
-    year: int = Field(..., ge=1990, le=2025)
+    vehicle_age: int = Field(..., ge=0)
     km_driven: int = Field(..., ge=0)
-    fuel_type: int
-    transmission: int
-    owner_count: int = Field(..., ge=0, le=5)
-    engine_size: int = Field(..., gt=0)
     mileage: float = Field(..., gt=0)
+    engine: float = Field(..., gt=0)
+    max_power: float = Field(..., gt=0)
     seats: int = Field(..., ge=2, le=10)
 
 
@@ -109,37 +107,22 @@ def predict(data: CarFeatures):
 
     logging.info(f"Received input: {data.dict()}")
 
-    # Log prediction input
     with open("logs/predictions.log", "a") as f:
         f.write(json.dumps(data.dict()) + "\n")
 
     input_df = pd.DataFrame([{
-        "year": data.year,
+        "vehicle_age": data.vehicle_age,
         "km_driven": data.km_driven,
-        "fuel_type": data.fuel_type,
-        "transmission": data.transmission,
-        "owner_count": data.owner_count,
-        "engine_size": data.engine_size,
         "mileage": data.mileage,
+        "engine": data.engine,
+        "max_power": data.max_power,
         "seats": data.seats
     }])
-
-    input_df = input_df[[
-        "year",
-        "km_driven",
-        "fuel_type",
-        "transmission",
-        "owner_count",
-        "engine_size",
-        "mileage",
-        "seats"
-    ]]
 
     prediction = model.predict(input_df)[0]
 
     drift_result = check_drift(data.dict())
 
-    # Automated Retraining Trigger
     if drift_result["drift_detected"]:
         trigger_retraining()
 
