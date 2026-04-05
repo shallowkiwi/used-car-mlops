@@ -1,0 +1,14 @@
+[
+    {
+        "type": "DATA_DRIFT",
+        "message": "Data drift detected",
+        "value": 0.2041024512273989,
+        "timestamp": 1775331629.3260055
+    },
+    {
+        "type": "HIGH_MAE",
+        "message": "High MAE detected",
+        "value": 79254.1294131161,
+        "timestamp": 1775331679.923415
+    }
+]
