@@ -40,7 +40,8 @@ def load_models():
     global model, shadow_model
 
     if not os.path.exists(MODEL_PATH):
-        subprocess.run([sys.executable, "src/train.py"], check=True)
+        
+        print("Loading model...")
 
     with open(MODEL_PATH, "rb") as f:
         model = pickle.load(f)
