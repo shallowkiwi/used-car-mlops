@@ -210,6 +210,10 @@ def add_feedback(data: FeedbackInput):
 
     actual = data.actual_price
 
+    @app.get("/healthz")
+    def health():
+        return {"status": "ok"}
+
     # Strict validation
     if not (0.5 * prediction_value <= actual <= 1.5 * prediction_value):
         raise HTTPException(
