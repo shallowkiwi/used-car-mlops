@@ -8,6 +8,7 @@ import warnings
 import time
 import uuid
 import numpy as np
+import requests
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -16,7 +17,6 @@ from pydantic import BaseModel, Field, validator
 
 from src.drift_detection import check_drift
 from src.performance_monitor import compute_metrics
-from src.retrain_pipeline import retrain_if_drift
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -32,7 +32,7 @@ shadow_model = None
 
 
 # =========================================================
-# Health check (IMPORTANT for Render)
+# Health check
 # =========================================================
 @app.get("/healthz")
 def health():
@@ -48,25 +48,48 @@ def load_models():
 
     print("🚀 Starting API...")
 
-    # Create folders if missing
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     os.makedirs("artifacts", exist_ok=True)
 
-    # Load main model safely
     if os.path.exists(MODEL_PATH):
         print("✅ Loading model...")
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
     else:
-        print("⚠️ Model not found. API will run but predictions will fail.")
+        print("⚠️ Model not found.")
 
-    # Load shadow model safely
     if os.path.exists(SHADOW_MODEL_PATH):
         with open(SHADOW_MODEL_PATH, "rb") as f:
             shadow_model = pickle.load(f)
+
+
+# =========================================================
+# GitHub Trigger
+# =========================================================
+def trigger_retraining():
+    token = os.getenv("GITHUB_TOKEN")
+    repo = os.getenv("GITHUB_REPO")
+
+    if not token or not repo:
+        print("❌ GitHub config missing")
+        return
+
+    url = f"https://api.github.com/repos/{repo}/dispatches"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    data = {"event_type": "retrain_model"}
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code == 204:
+        print("🚀 GitHub retraining triggered")
     else:
-        shadow_model = None
+        print(f"❌ Trigger failed: {response.text}")
 
 
 # =========================================================
@@ -93,7 +116,7 @@ class FeedbackInput(BaseModel):
 
 
 # =========================================================
-# Logging helper
+# Logging
 # =========================================================
 def log_event(entry):
     os.makedirs("logs", exist_ok=True)
@@ -102,7 +125,7 @@ def log_event(entry):
 
 
 # =========================================================
-# Performance tracking
+# Performance Tracking
 # =========================================================
 def load_performance():
     if not os.path.exists(PERFORMANCE_FILE):
@@ -113,44 +136,18 @@ def load_performance():
 
 
 def save_performance(data):
-    os.makedirs("artifacts", exist_ok=True)
     with open(PERFORMANCE_FILE, "w") as f:
         json.dump(data, f)
 
 
 def update_performance(main_error, shadow_error):
     data = load_performance()
-
     data["main_errors"].append(main_error)
+
     if shadow_error is not None:
         data["shadow_errors"].append(shadow_error)
 
     save_performance(data)
-
-
-def check_promotion():
-    data = load_performance()
-
-    if len(data["main_errors"]) < 50:
-        return False
-
-    main_mae = np.mean(np.abs(data["main_errors"]))
-    shadow_mae = np.mean(np.abs(data["shadow_errors"]))
-
-    return shadow_mae < main_mae
-
-
-def promote_model():
-    global model, shadow_model
-
-    print("🚀 Promoting shadow model")
-
-    os.replace(SHADOW_MODEL_PATH, MODEL_PATH)
-
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
-
-    save_performance({"main_errors": [], "shadow_errors": []})
 
 
 # =========================================================
@@ -161,10 +158,7 @@ def predict(data: CarFeatures):
     global model, shadow_model
 
     if model is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Model not loaded. Deployment missing model.pkl"
-        )
+        raise HTTPException(status_code=500, detail="Model not loaded")
 
     input_df = pd.DataFrame([data.dict()])
 
@@ -189,6 +183,10 @@ def predict(data: CarFeatures):
 
     drift_result = check_drift()
     metrics = compute_metrics()
+
+    # 🚀 Trigger GitHub retraining
+    if drift_result.get("drift_detected"):
+        trigger_retraining()
 
     return {
         "prediction_id": prediction_id,
@@ -234,10 +232,7 @@ def add_feedback(data: FeedbackInput):
     actual = data.actual_price
 
     if not (0.5 * prediction_value <= actual <= 1.5 * prediction_value):
-        raise HTTPException(
-            status_code=400,
-            detail="Rejected: unrealistic deviation"
-        )
+        raise HTTPException(status_code=400, detail="Unrealistic deviation")
 
     log_event({
         "type": "feedback",
@@ -253,10 +248,5 @@ def add_feedback(data: FeedbackInput):
         shadow_error = abs(shadow_prediction - actual)
 
     update_performance(main_error, shadow_error)
-
-    retrain_if_drift()
-
-    if check_promotion():
-        promote_model()
 
     return {"message": "Feedback recorded"}
