@@ -2,7 +2,6 @@ import logging
 import os
 import pandas as pd
 import pickle
-import subprocess
 import sys
 import json
 import warnings
@@ -33,19 +32,36 @@ shadow_model = None
 
 
 # =========================================================
+# Health check (IMPORTANT for Render)
+# =========================================================
+@app.get("/healthz")
+def health():
+    return {"status": "ok"}
+
+
+# =========================================================
 # Load Models
 # =========================================================
 @app.on_event("startup")
 def load_models():
     global model, shadow_model
 
-    if not os.path.exists(MODEL_PATH):
-        
-        print("Loading model...")
+    print("🚀 Starting API...")
 
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
+    # Create folders if missing
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    os.makedirs("artifacts", exist_ok=True)
 
+    # Load main model safely
+    if os.path.exists(MODEL_PATH):
+        print("✅ Loading model...")
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+    else:
+        print("⚠️ Model not found. API will run but predictions will fail.")
+
+    # Load shadow model safely
     if os.path.exists(SHADOW_MODEL_PATH):
         with open(SHADOW_MODEL_PATH, "rb") as f:
             shadow_model = pickle.load(f)
@@ -77,9 +93,10 @@ class FeedbackInput(BaseModel):
 
 
 # =========================================================
-# Logging helper (APPEND ONLY)
+# Logging helper
 # =========================================================
 def log_event(entry):
+    os.makedirs("logs", exist_ok=True)
     with open(PREDICTION_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
@@ -126,7 +143,7 @@ def check_promotion():
 def promote_model():
     global model, shadow_model
 
-    print("🚀 Promoting shadow model to production")
+    print("🚀 Promoting shadow model")
 
     os.replace(SHADOW_MODEL_PATH, MODEL_PATH)
 
@@ -142,6 +159,12 @@ def promote_model():
 @app.post("/predict")
 def predict(data: CarFeatures):
     global model, shadow_model
+
+    if model is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Model not loaded. Deployment missing model.pkl"
+        )
 
     input_df = pd.DataFrame([data.dict()])
 
@@ -202,7 +225,6 @@ def add_feedback(data: FeedbackInput):
                     prediction_value = entry.get("prediction")
                     shadow_prediction = entry.get("shadow_prediction")
                     break
-
             except:
                 continue
 
@@ -211,21 +233,10 @@ def add_feedback(data: FeedbackInput):
 
     actual = data.actual_price
 
-    @app.get("/healthz")
-    def health():
-        return {"status": "ok"}
-
-    # Strict validation
     if not (0.5 * prediction_value <= actual <= 1.5 * prediction_value):
         raise HTTPException(
             status_code=400,
-            detail=f"Rejected: unrealistic deviation from prediction ({prediction_value})"
-        )
-
-    if not (20000 <= actual <= 2000000):
-        raise HTTPException(
-            status_code=400,
-            detail="Rejected: unrealistic price range"
+            detail="Rejected: unrealistic deviation"
         )
 
     log_event({
@@ -236,8 +247,8 @@ def add_feedback(data: FeedbackInput):
     })
 
     main_error = abs(prediction_value - actual)
-
     shadow_error = None
+
     if shadow_prediction is not None:
         shadow_error = abs(shadow_prediction - actual)
 
