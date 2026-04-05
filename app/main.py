@@ -27,6 +27,14 @@ SHADOW_MODEL_PATH = "models/shadow_model.pkl"
 PERFORMANCE_FILE = "artifacts/model_performance.json"
 PREDICTION_LOG = "logs/predictions.log"
 
+# ============================
+# NEW CONFIG
+# ============================
+RETRAIN_COOLDOWN = 3600  # 1 hour
+MIN_FEEDBACK = 20
+MAE_THRESHOLD = 50000
+RETRAIN_STATE_FILE = "artifacts/retrain_state.json"
+
 model = None
 shadow_model = None
 
@@ -90,6 +98,21 @@ def trigger_retraining():
         print("🚀 GitHub retraining triggered")
     else:
         print(f"❌ Trigger failed: {response.text}")
+
+
+# =========================================================
+# Retrain State Helpers
+# =========================================================
+def load_retrain_state():
+    if not os.path.exists(RETRAIN_STATE_FILE):
+        return {"last_retrain_time": 0}
+    with open(RETRAIN_STATE_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_retrain_state(data):
+    with open(RETRAIN_STATE_FILE, "w") as f:
+        json.dump(data, f)
 
 
 # =========================================================
@@ -184,9 +207,32 @@ def predict(data: CarFeatures):
     drift_result = check_drift()
     metrics = compute_metrics()
 
-    # 🚀 Trigger GitHub retraining (FIXED)
-    if drift_result.get("drift_detected") or metrics.get("mae", 0) > 50000:
+    # ============================
+    # NEW RETRAIN LOGIC
+    # ============================
+    performance = load_performance()
+    num_feedback = len(performance.get("main_errors", []))
+
+    state = load_retrain_state()
+    last_retrain = state.get("last_retrain_time", 0)
+    current_time = time.time()
+
+    cooldown_passed = (current_time - last_retrain) > RETRAIN_COOLDOWN
+    enough_data = num_feedback >= MIN_FEEDBACK
+    high_error = metrics.get("mae", 0) > MAE_THRESHOLD
+    drift_detected = drift_result.get("drift_detected", False)
+
+    if cooldown_passed and enough_data and (high_error or drift_detected):
+        print("🚀 Retrain conditions met")
         trigger_retraining()
+        save_retrain_state({"last_retrain_time": current_time})
+    else:
+        print("⏳ Retrain skipped:", {
+            "cooldown_passed": cooldown_passed,
+            "enough_data": enough_data,
+            "high_error": high_error,
+            "drift_detected": drift_detected
+        })
 
     return {
         "prediction_id": prediction_id,
