@@ -185,7 +185,7 @@ def predict(data: CarFeatures):
     metrics = compute_metrics()
 
     # 🚀 Trigger GitHub retraining
-    if drift_result.get("drift_detected"):
+    
         trigger_retraining()
 
     return {
