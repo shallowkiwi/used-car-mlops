@@ -219,7 +219,11 @@ def predict(data: CarFeatures):
 
     cooldown_passed = (current_time - last_retrain) > RETRAIN_COOLDOWN
     enough_data = num_feedback >= MIN_FEEDBACK
-    high_error = metrics.get("mae", 0) > MAE_THRESHOLD
+    mae_value = metrics.get("mae")
+
+    high_error = (
+        mae_value is not None and mae_value > MAE_THRESHOLD
+    )
     drift_detected = drift_result.get("drift_detected", False)
 
     if cooldown_passed and enough_data and (high_error or drift_detected):
