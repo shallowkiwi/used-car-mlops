@@ -32,7 +32,7 @@ RANDOM_STATE = 42
 FEEDBACK_RATIO = 0.2
 
 # 🔥 NEW (adaptive)
-ADAPTIVE_MODE_THRESHOLD = 100
+ADAPTIVE_MODE_THRESHOLD = 20
 ADAPTIVE_WEIGHT = 0.5
 
 
@@ -61,7 +61,7 @@ def load_feedback_data():
                     continue
 
                 # only accept ±30%
-                if not (0.7 * pred <= actual <= 1.3 * pred):
+                if not (0.5 * pred <= actual <= 1.5 * pred):
                     continue
 
                 features = data.get("features", {})
@@ -85,7 +85,7 @@ def load_feedback_data():
         (df["engine"] >= 500) & (df["engine"] <= 5000) &
         (df["max_power"] >= 20) & (df["max_power"] <= 500) &
         (df["seats"] >= 2) & (df["seats"] <= 8) &
-        (df["selling_price"] >= 20000) & (df["selling_price"] <= 2000000)
+        (df["selling_price"] >= 20000) & (df["selling_price"] <= 10000000)
     ]
 
     print(f"Valid feedback samples used: {len(df)}")

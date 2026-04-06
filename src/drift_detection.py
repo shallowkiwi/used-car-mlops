@@ -8,8 +8,8 @@ LOG_FILE = "logs/predictions.log"
 # ============================
 # Config
 # ============================
-WINDOW_SIZE = 100
-MIN_REQUIRED = 50
+WINDOW_SIZE = 30
+MIN_REQUIRED = 30
 DRIFT_THRESHOLD = 0.1
 
 # NEW
