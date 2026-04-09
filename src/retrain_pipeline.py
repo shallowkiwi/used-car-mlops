@@ -5,6 +5,13 @@ import os
 import json
 import time
 
+# ============================
+# FIX: Add project root to path
+# ============================
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+sys.path.append(PROJECT_ROOT)
+
 from src.drift_detection import check_drift
 from src.performance_monitor import compute_metrics
 
@@ -98,19 +105,16 @@ def retrain_if_drift():
     # Performance check
     # -------------------------
     metrics = compute_metrics()
-    
     count = metrics.get("count", 0)
 
     print(f"Feedback sample count: {count}")
 
-# 🔥 NEW: Minimum data guard
     MIN_SAMPLES = 50
 
     if count < MIN_SAMPLES:
         print(f"Not enough data for reliable retraining (need {MIN_SAMPLES}, got {count})")
         return
 
-    # 🔥 CHANGE: use robust MAE instead
     robust_mae = metrics.get("robust_mae")
     standard_mae = metrics.get("mae")
 
@@ -123,37 +127,22 @@ def retrain_if_drift():
 
     baseline_mae = load_baseline()
 
-    # -------------------------
-    # Initialize baseline
-    # -------------------------
     if baseline_mae is None:
         print("📌 Setting initial baseline (robust MAE)")
         save_baseline(robust_mae)
         return
 
-    # -------------------------
-    # Check worsening
-    # -------------------------
     mae_worsened = robust_mae > baseline_mae * (1 + DELTA)
 
-    # -------------------------
-    # Alerting
-    # -------------------------
     if drift_detected:
         log_alert("Drift detected", robust_mae, drift_score)
 
     if mae_worsened:
         log_alert("Robust MAE worsened significantly", robust_mae, drift_score)
 
-    # -------------------------
-    # Cooldown
-    # -------------------------
     if not can_retrain():
         return
 
-    # -------------------------
-    # Final decision
-    # -------------------------
     if drift_detected or mae_worsened:
 
         print("🚨 Retraining triggered!")
@@ -164,22 +153,15 @@ def retrain_if_drift():
         if mae_worsened:
             print(f"Reason: Robust MAE worsened (baseline={baseline_mae}, current={robust_mae})")
 
-        # -------------------------
-        # Run training
-        # -------------------------
         subprocess.run([sys.executable, "src/train.py"], check=True)
 
         print("Model retrained successfully.")
 
-        # -------------------------
-        # Update timers
-        # -------------------------
         update_retrain_time()
         save_baseline(robust_mae)
 
-        # -------------------------
-        # Log retraining
-        # -------------------------
+        os.makedirs("logs", exist_ok=True)
+
         with open(RETRAIN_LOG, "a") as f:
             f.write(
                 f"{datetime.datetime.now()} - Retrained | "
@@ -189,3 +171,11 @@ def retrain_if_drift():
 
     else:
         print("No retraining needed.")
+
+
+# ============================
+# ENTRY POINT
+# ============================
+if __name__ == "__main__":
+    print("🚀 Starting retraining pipeline...")
+    retrain_if_drift()

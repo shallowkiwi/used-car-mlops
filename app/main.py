@@ -28,28 +28,23 @@ PERFORMANCE_FILE = "artifacts/model_performance.json"
 PREDICTION_LOG = "logs/predictions.log"
 
 # ============================
-# NEW CONFIG
+# CONFIG
 # ============================
-RETRAIN_COOLDOWN = 3600  # 1 hour
-MIN_FEEDBACK = 20
-MAE_THRESHOLD = 50000
-RETRAIN_STATE_FILE = "artifacts/retrain_state.json"
+DEMO_MODE = False
+MIN_FEEDBACK_REQUIRED = 50
+RETRAIN_COOLDOWN = 300  # seconds
+
+last_retrain_time = 0
 
 model = None
 shadow_model = None
 
 
-# =========================================================
-# Health check
-# =========================================================
 @app.get("/healthz")
 def health():
     return {"status": "ok"}
 
 
-# =========================================================
-# Load Models
-# =========================================================
 @app.on_event("startup")
 def load_models():
     global model, shadow_model
@@ -64,17 +59,12 @@ def load_models():
         print("✅ Loading model...")
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
-    else:
-        print("⚠️ Model not found.")
 
     if os.path.exists(SHADOW_MODEL_PATH):
         with open(SHADOW_MODEL_PATH, "rb") as f:
             shadow_model = pickle.load(f)
 
 
-# =========================================================
-# GitHub Trigger
-# =========================================================
 def trigger_retraining():
     token = os.getenv("GITHUB_TOKEN")
     repo = os.getenv("GITHUB_REPO")
@@ -100,24 +90,6 @@ def trigger_retraining():
         print(f"❌ Trigger failed: {response.text}")
 
 
-# =========================================================
-# Retrain State Helpers
-# =========================================================
-def load_retrain_state():
-    if not os.path.exists(RETRAIN_STATE_FILE):
-        return {"last_retrain_time": 0}
-    with open(RETRAIN_STATE_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_retrain_state(data):
-    with open(RETRAIN_STATE_FILE, "w") as f:
-        json.dump(data, f)
-
-
-# =========================================================
-# Schemas
-# =========================================================
 class CarFeatures(BaseModel):
     vehicle_age: int = Field(..., ge=0, le=20)
     km_driven: int = Field(..., ge=0, le=300000)
@@ -138,18 +110,12 @@ class FeedbackInput(BaseModel):
         return v
 
 
-# =========================================================
-# Logging
-# =========================================================
 def log_event(entry):
     os.makedirs("logs", exist_ok=True)
     with open(PREDICTION_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
 
-# =========================================================
-# Performance Tracking
-# =========================================================
 def load_performance():
     if not os.path.exists(PERFORMANCE_FILE):
         return {"main_errors": [], "shadow_errors": []}
@@ -173,9 +139,32 @@ def update_performance(main_error, shadow_error):
     save_performance(data)
 
 
-# =========================================================
-# Predict
-# =========================================================
+def should_retrain(drift_detected):
+    global last_retrain_time
+
+    if DEMO_MODE:
+        print("🚀 DEMO MODE: Retraining once")
+        return True
+
+    if not drift_detected:
+        return False
+
+    performance = load_performance()
+    feedback_count = len(performance.get("main_errors", []))
+
+    if feedback_count < MIN_FEEDBACK_REQUIRED:
+        print(f"⚠️ Not enough feedback: {feedback_count}")
+        return False
+
+    current_time = time.time()
+    if current_time - last_retrain_time < RETRAIN_COOLDOWN:
+        print("⏳ Cooldown active, skipping retrain")
+        return False
+
+    last_retrain_time = current_time
+    return True
+
+
 @app.post("/predict")
 def predict(data: CarFeatures):
     global model, shadow_model
@@ -189,9 +178,9 @@ def predict(data: CarFeatures):
 
     shadow_prediction = None
     if shadow_model is not None:
-        shadow_prediction = float(
-            np.expm1(shadow_model.predict(input_df)[0])
-        )
+        base_shadow = float(np.expm1(shadow_model.predict(input_df)[0]))
+        noise_factor = np.random.uniform(0.9, 1.1)
+        shadow_prediction = base_shadow * noise_factor
 
     prediction_id = str(uuid.uuid4())
 
@@ -207,36 +196,14 @@ def predict(data: CarFeatures):
     drift_result = check_drift()
     metrics = compute_metrics()
 
-    # ============================
-    # NEW RETRAIN LOGIC
-    # ============================
-    performance = load_performance()
-    num_feedback = len(performance.get("main_errors", []))
-
-    state = load_retrain_state()
-    last_retrain = state.get("last_retrain_time", 0)
-    current_time = time.time()
-
-    cooldown_passed = (current_time - last_retrain) > RETRAIN_COOLDOWN
-    enough_data = num_feedback >= MIN_FEEDBACK
-    mae_value = metrics.get("mae")
-
-    high_error = (
-        mae_value is not None and mae_value > MAE_THRESHOLD
-    )
     drift_detected = drift_result.get("drift_detected", False)
 
-    if cooldown_passed and enough_data and (high_error or drift_detected):
-        print("🚀 Retrain conditions met")
+    # ============================
+    # SMART RETRAIN LOGIC
+    # ============================
+    if should_retrain(drift_detected):
+        print("🚀 Triggering retraining...")
         trigger_retraining()
-        save_retrain_state({"last_retrain_time": current_time})
-    else:
-        print("⏳ Retrain skipped:", {
-            "cooldown_passed": cooldown_passed,
-            "enough_data": enough_data,
-            "high_error": high_error,
-            "drift_detected": drift_detected
-        })
 
     return {
         "prediction_id": prediction_id,
@@ -249,9 +216,6 @@ def predict(data: CarFeatures):
     }
 
 
-# =========================================================
-# Feedback
-# =========================================================
 @app.post("/feedback")
 def add_feedback(data: FeedbackInput):
 
