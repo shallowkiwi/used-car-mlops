@@ -1,19 +1,15 @@
 import numpy as np
+import sqlite3
 import os
-import json
 import time
 
-LOG_FILE = "logs/predictions.log"
+DB_FILE = "data/monitoring.db"
 
-# ============================
-# Config
-# ============================
 WINDOW_SIZE = 30
 MIN_REQUIRED = 30
 DRIFT_THRESHOLD = 0.1
 
-# NEW
-RETRAIN_COOLDOWN = 3600  # seconds (1 hour)
+RETRAIN_COOLDOWN = 3600
 LAST_RETRAIN_FILE = "logs/last_retrain.txt"
 
 FEATURES = [
@@ -26,25 +22,26 @@ FEATURES = [
 ]
 
 
-# ============================
-# Helpers
-# ============================
+def get_connection():
+    return sqlite3.connect(DB_FILE)
+
+
 def load_feature_data():
-    if not os.path.exists(LOG_FILE):
-        return []
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    records = []
+    cursor.execute("""
+        SELECT vehicle_age, km_driven, mileage, engine, max_power, seats
+        FROM predictions
+    """)
 
-    with open(LOG_FILE, "r") as f:
-        for line in f:
-            try:
-                data = json.loads(line.strip())
-                if "features" in data:
-                    records.append(data["features"])
-            except:
-                continue
+    rows = cursor.fetchall()
+    conn.close()
 
-    return records
+    return [
+        dict(zip(FEATURES, row))
+        for row in rows
+    ]
 
 
 def compute_feature_drift(old_vals, new_vals):
@@ -56,11 +53,9 @@ def compute_feature_drift(old_vals, new_vals):
 
     old_mean = np.mean(old_vals)
     new_mean = np.mean(new_vals)
-
     old_std = np.std(old_vals) + 1e-6
 
-    drift = abs(new_mean - old_mean) / old_std
-    return drift
+    return abs(new_mean - old_mean) / old_std
 
 
 def can_retrain():
@@ -73,14 +68,6 @@ def can_retrain():
     return (time.time() - last_time) > RETRAIN_COOLDOWN
 
 
-def mark_retrain_time():
-    with open(LAST_RETRAIN_FILE, "w") as f:
-        f.write(str(time.time()))
-
-
-# ============================
-# Main Drift Function
-# ============================
 def check_drift():
 
     records = load_feature_data()
@@ -90,42 +77,37 @@ def check_drift():
             "drift_score": 0.0,
             "drift_detected": False,
             "retrain_recommended": False,
-            "message": "Not enough data for drift detection"
+            "message": "Not enough data"
         }
 
     split_index = max(0, len(records) - 2 * WINDOW_SIZE)
 
-    old_batch = records[split_index : split_index + WINDOW_SIZE]
+    old_batch = records[split_index:split_index + WINDOW_SIZE]
     new_batch = records[-WINDOW_SIZE:]
 
     drift_scores = []
 
     for feature in FEATURES:
-        old_vals = [r[feature] for r in old_batch if feature in r]
-        new_vals = [r[feature] for r in new_batch if feature in r]
+        old_vals = [r[feature] for r in old_batch]
+        new_vals = [r[feature] for r in new_batch]
 
         drift = compute_feature_drift(old_vals, new_vals)
 
         if drift is not None:
             drift_scores.append(drift)
 
-    if len(drift_scores) == 0:
+    if not drift_scores:
         return {
             "drift_score": 0.0,
             "drift_detected": False,
             "retrain_recommended": False,
-            "message": "No valid features for drift"
+            "message": "No valid features"
         }
 
     final_score = float(np.mean(drift_scores))
     drift_detected = final_score > DRIFT_THRESHOLD
 
-    # ============================
-    # NEW LOGIC
-    # ============================
-    retrain_allowed = can_retrain()
-
-    retrain_recommended = drift_detected and retrain_allowed
+    retrain_recommended = drift_detected and can_retrain()
 
     return {
         "drift_score": final_score,
@@ -134,7 +116,7 @@ def check_drift():
         "message": (
             "Retrain recommended"
             if retrain_recommended
-            else "Drift detected but cooldown active"
+            else "Cooldown active"
             if drift_detected
             else "No drift"
         )
