@@ -109,7 +109,7 @@ def retrain_if_drift():
 
     print(f"Feedback sample count: {count}")
 
-    MIN_SAMPLES = 50
+    MIN_SAMPLES = 5
 
     if count < MIN_SAMPLES:
         print(f"Not enough data for reliable retraining (need {MIN_SAMPLES}, got {count})")

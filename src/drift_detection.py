@@ -12,7 +12,7 @@ def check_drift():
         conn.close()
 
         # Not enough data case
-        if len(df) < 50:
+        if len(df) < 5:
             return {
                 "drift_score": 0,
                 "drift_detected": False,
@@ -21,13 +21,13 @@ def check_drift():
             }
 
         # Split old vs recent
-        recent = df.tail(50)
-        old = df.head(50)
+        recent = df.tail(5)
+        old = df.head(5)
 
         # Simple drift calculation (on km_driven)
         drift_score = abs(recent["km_driven"].mean() - old["km_driven"].mean())
 
-        drift_detected = drift_score > 10000
+        drift_detected = drift_score > 1000
 
         return {
             "drift_score": float(drift_score),
