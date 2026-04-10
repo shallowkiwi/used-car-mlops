@@ -3,7 +3,6 @@ import os
 import pandas as pd
 import pickle
 import sys
-import json
 import warnings
 import time
 import uuid
@@ -25,20 +24,29 @@ app = FastAPI(title="Used Car Price Prediction API")
 
 MODEL_PATH = "models/model.pkl"
 SHADOW_MODEL_PATH = "models/shadow_model.pkl"
-
 DB_FILE = "data/monitoring.db"
-
-# ============================
-# CONFIG
-# ============================
-DEMO_MODE = False
-MIN_FEEDBACK_REQUIRED = 50
-RETRAIN_COOLDOWN = 300
-
-last_retrain_time = 0
 
 model = None
 shadow_model = None
+last_loaded_time = 0
+
+
+# ============================
+# MODEL AUTO-RELOAD (🔥 KEY FIX)
+# ============================
+def reload_model_if_updated():
+    global model, last_loaded_time
+
+    if not os.path.exists(MODEL_PATH):
+        return
+
+    modified_time = os.path.getmtime(MODEL_PATH)
+
+    if modified_time > last_loaded_time:
+        print("🔄 Reloading updated model...")
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        last_loaded_time = modified_time
 
 
 # ============================
@@ -113,19 +121,16 @@ def update_feedback(prediction_id, actual):
 # ============================
 @app.on_event("startup")
 def load_models():
-    global model, shadow_model
+    global model, shadow_model, last_loaded_time
 
     print("🚀 Starting API...")
 
     init_db()
 
-    os.makedirs("models", exist_ok=True)
-    os.makedirs("artifacts", exist_ok=True)
-
     if os.path.exists(MODEL_PATH):
-        print("✅ Loading model...")
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
+        last_loaded_time = os.path.getmtime(MODEL_PATH)
 
     if os.path.exists(SHADOW_MODEL_PATH):
         with open(SHADOW_MODEL_PATH, "rb") as f:
@@ -189,27 +194,6 @@ class FeedbackInput(BaseModel):
 
 
 # ============================
-# RETRAIN LOGIC
-# ============================
-def should_retrain(drift_detected):
-    global last_retrain_time
-
-    if DEMO_MODE:
-        return True
-
-    if not drift_detected:
-        return False
-
-    current_time = time.time()
-
-    if current_time - last_retrain_time < RETRAIN_COOLDOWN:
-        return False
-
-    last_retrain_time = current_time
-    return True
-
-
-# ============================
 # PREDICT
 # ============================
 @app.post("/predict")
@@ -218,6 +202,9 @@ def predict(data: CarFeatures):
 
     if model is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
+
+    # 🔄 Reload model if retrained
+    reload_model_if_updated()
 
     input_df = pd.DataFrame([data.dict()])
 
@@ -230,15 +217,12 @@ def predict(data: CarFeatures):
 
     prediction_id = str(uuid.uuid4())
 
-    # ✅ STORE IN DB
     insert_prediction(data.dict(), prediction_id, prediction, shadow_prediction)
 
     drift_result = check_drift()
     metrics = compute_metrics()
 
-    drift_detected = drift_result.get("drift_detected", False)
-
-    if should_retrain(drift_detected):
+    if drift_result.get("drift_detected"):
         print("🚀 Triggering retraining...")
         trigger_retraining()
 
@@ -259,8 +243,36 @@ def predict(data: CarFeatures):
 @app.post("/feedback")
 def add_feedback(data: FeedbackInput):
 
-    actual = data.actual_price
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
 
-    update_feedback(data.prediction_id, actual)
+    cursor.execute("""
+        SELECT COUNT(*) FROM predictions WHERE prediction_id = ?
+    """, (data.prediction_id,))
+    
+    exists = cursor.fetchone()[0]
 
-    return {"message": "Feedback recorded"}
+    if exists == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prediction ID not found")
+
+    cursor.execute("""
+        UPDATE predictions
+        SET actual = ?
+        WHERE prediction_id = ?
+    """, (data.actual_price, data.prediction_id))
+
+    conn.commit()
+    conn.close()
+
+    metrics = compute_metrics()
+
+    return {
+        "message": "Feedback recorded successfully",
+        "updated_metrics": {
+            "mae": metrics.get("mae"),
+            "robust_mae": metrics.get("robust_mae"),
+            "median_error": metrics.get("median_error"),
+            "count": metrics.get("count")
+        }
+    }

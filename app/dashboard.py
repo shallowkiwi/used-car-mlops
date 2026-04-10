@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import json
-from datetime import datetime
+import sqlite3
 import os
 import sys
 
@@ -10,42 +9,41 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.performance_monitor import compute_metrics
 
-LOG_FILE = "logs/predictions.log"
+# ================================
+# 📂 DATABASE PATH
+# ================================
+DB_PATH = "data/predictions.db"
 
 
+# ================================
+# 📥 LOAD DATA FROM SQLITE
+# ================================
 def load_data():
-    data = []
-
-    if not os.path.exists(LOG_FILE):
+    if not os.path.exists(DB_PATH):
         return pd.DataFrame()
 
-    with open(LOG_FILE, "r") as f:
-        for line in f:
-            try:
-                data.append(json.loads(line))
-            except:
-                continue
+    conn = sqlite3.connect(DB_PATH)
 
-    if not data:
-        return pd.DataFrame()
+    try:
+        df = pd.read_sql_query("SELECT * FROM predictions", conn)
+    except Exception:
+        df = pd.DataFrame()
 
-    df = pd.DataFrame(data)
+    conn.close()
 
-    if "features" in df.columns:
-        features_df = pd.json_normalize(df["features"])
-        df = pd.concat([df.drop(columns=["features"]), features_df], axis=1)
+    if df.empty:
+        return df
 
-    df = df.loc[:, ~df.columns.duplicated()]
-
+    # Convert timestamp if exists
     if "timestamp" in df.columns:
-        df = df[df["timestamp"].notna()]
-        df["time"] = df["timestamp"].apply(
-            lambda x: datetime.fromtimestamp(float(x))
-        )
+        df["time"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
     return df
 
 
+# ================================
+# 🎯 STREAMLIT UI
+# ================================
 st.set_page_config(page_title="Used Car MLOps Dashboard", layout="wide")
 
 st.title("🚗 Used Car Price MLOps Dashboard")
@@ -53,23 +51,28 @@ st.title("🚗 Used Car Price MLOps Dashboard")
 df = load_data()
 metrics = compute_metrics()
 
-# =========================================================
+# ================================
 # 🔥 METRICS
-# =========================================================
+# ================================
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Robust MAE", f"{metrics.get('trimmed_mae', 0):,.2f}")
-col2.metric("Median Error", f"{metrics.get('median_error', 0):,.2f}")
-col3.metric("Feedback Samples", metrics.get("count", 0))
+def safe_format(value):
+    if value is None:
+        return "N/A"
+    return f"{value:,.2f}"
 
-# Optional: show original MAE
-st.caption(f"Standard MAE: {metrics.get('mae', 0):,.2f}")
+
+col1.metric("Robust MAE", safe_format(metrics.get("robust_mae")))
+col2.metric("Median Error", safe_format(metrics.get("median_error")))
+col3.metric("Feedback Samples", metrics.get("count", 0) or 0)
+
+st.caption(f"Standard MAE: {safe_format(metrics.get('mae'))}")
 
 st.divider()
 
-# =========================================================
+# ================================
 # 📊 DATA TABLE
-# =========================================================
+# ================================
 st.subheader("📊 Predictions Data")
 
 if df.empty:
@@ -77,13 +80,13 @@ if df.empty:
 else:
     st.dataframe(df.tail(20), use_container_width=True)
 
-# =========================================================
+# ================================
 # 📉 ERROR ANALYSIS
-# =========================================================
+# ================================
 st.subheader("📉 Error Analysis")
 
-if not df.empty and "actual" in df.columns and "prediction" in df.columns:
-    df["error"] = abs(df["actual"] - df["prediction"])
+if not df.empty and "actual_price" in df.columns and "predicted_price" in df.columns:
+    df["error"] = abs(df["actual_price"] - df["predicted_price"])
     st.line_chart(df["error"])
 else:
     st.info("Not enough data for error analysis yet.")
