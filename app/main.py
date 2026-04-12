@@ -1,14 +1,12 @@
-import logging
 import os
-import pandas as pd
-import pickle
 import sys
+import pickle
 import warnings
-import time
 import uuid
 import numpy as np
-import requests
+import pandas as pd
 import sqlite3
+import requests
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -39,14 +37,15 @@ last_loaded_time = 0
 
 
 # ============================
-# UI ROUTE (🔥 NEW)
+# 🔥 UI ROUTE
 # ============================
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
     <html>
     <head>
-        <title>Used Car Price Prediction</title>
+        <title>Used Car MLOps System</title>
+
         <style>
             body {
                 font-family: Arial;
@@ -55,34 +54,48 @@ def home():
                 text-align: center;
                 padding: 40px;
             }
+
             input {
                 padding: 10px;
-                margin: 8px;
+                margin: 6px;
                 width: 220px;
                 border-radius: 5px;
                 border: none;
             }
+
             button {
                 padding: 10px 20px;
+                margin-top: 10px;
                 background: #22c55e;
                 border: none;
                 border-radius: 5px;
                 cursor: pointer;
                 font-size: 16px;
             }
+
             .box {
                 background: #1e293b;
                 padding: 30px;
                 border-radius: 10px;
                 display: inline-block;
+                width: 320px;
+            }
+
+            .result {
+                margin-top: 20px;
+                font-size: 18px;
             }
         </style>
     </head>
 
     <body>
-        <h1>🚗 Used Car Price Prediction</h1>
+
+        <h1>🚗 Used Car Price Prediction (MLOps)</h1>
 
         <div class="box">
+
+            <h3>Enter Car Details</h3>
+
             <input id="vehicle_age" placeholder="Vehicle Age"><br>
             <input id="km_driven" placeholder="KM Driven"><br>
             <input id="mileage" placeholder="Mileage"><br>
@@ -92,32 +105,72 @@ def home():
 
             <button onclick="predict()">Predict</button>
 
-            <h2 id="result"></h2>
+            <div class="result" id="prediction"></div>
+
+            <hr>
+
+            <h3>Give Feedback</h3>
+
+            <input id="actual_price" placeholder="Actual Price"><br>
+            <button onclick="sendFeedback()">Submit Feedback</button>
+
+            <div class="result" id="feedback_msg"></div>
+
         </div>
 
         <script>
-        async function predict() {
-            const data = {
-                vehicle_age: parseFloat(document.getElementById("vehicle_age").value),
-                km_driven: parseFloat(document.getElementById("km_driven").value),
-                mileage: parseFloat(document.getElementById("mileage").value),
-                engine: parseFloat(document.getElementById("engine").value),
-                max_power: parseFloat(document.getElementById("max_power").value),
-                seats: parseFloat(document.getElementById("seats").value)
-            };
+            let lastPredictionId = null;
 
-            const res = await fetch('/predict', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
+            async function predict() {
 
-            const result = await res.json();
+                const data = {
+                    vehicle_age: parseFloat(document.getElementById("vehicle_age").value),
+                    km_driven: parseFloat(document.getElementById("km_driven").value),
+                    mileage: parseFloat(document.getElementById("mileage").value),
+                    engine: parseFloat(document.getElementById("engine").value),
+                    max_power: parseFloat(document.getElementById("max_power").value),
+                    seats: parseFloat(document.getElementById("seats").value)
+                };
 
-            document.getElementById("result").innerText =
-                "Predicted Price: ₹ " + result.predicted_price.toFixed(2);
-        }
+                const res = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await res.json();
+
+                lastPredictionId = result.prediction_id;
+
+                document.getElementById("prediction").innerText =
+                    "Predicted Price: ₹ " + result.predicted_price.toFixed(2);
+            }
+
+            async function sendFeedback() {
+
+                if (!lastPredictionId) {
+                    alert("Please make a prediction first!");
+                    return;
+                }
+
+                const actual = parseFloat(document.getElementById("actual_price").value);
+
+                const res = await fetch('/feedback', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        prediction_id: lastPredictionId,
+                        actual_price: actual
+                    })
+                });
+
+                const result = await res.json();
+
+                document.getElementById("feedback_msg").innerText =
+                    "✅ Feedback saved! Samples: " + result.updated_metrics.count;
+            }
         </script>
+
     </body>
     </html>
     """
@@ -228,9 +281,10 @@ def trigger_retraining():
     url = f"https://api.github.com/repos/{repo}/dispatches"
 
     headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github+json"
-}
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
     data = {"event_type": "retrain_model"}
 
     response = requests.post(url, headers=headers, json=data)
@@ -251,6 +305,17 @@ class CarFeatures(BaseModel):
     engine: float = Field(..., ge=500, le=5000)
     max_power: float = Field(..., ge=20, le=500)
     seats: int = Field(..., ge=2, le=8)
+
+
+class FeedbackInput(BaseModel):
+    prediction_id: str
+    actual_price: float
+
+    @validator("actual_price")
+    def validate_price(cls, v):
+        if not (20000 <= v <= 2000000):
+            raise ValueError("Unrealistic price value")
+        return v
 
 
 # ============================
@@ -281,6 +346,7 @@ def predict(data: CarFeatures):
     metrics = compute_metrics()
 
     if drift_result.get("drift_detected"):
+        print("🚀 Triggering retraining...")
         trigger_retraining()
 
     return {
@@ -291,4 +357,45 @@ def predict(data: CarFeatures):
         "mae": metrics.get("mae"),
         "robust_mae": metrics.get("robust_mae"),
         "median_error": metrics.get("median_error")
+    }
+
+
+# ============================
+# FEEDBACK
+# ============================
+@app.post("/feedback")
+def add_feedback(data: FeedbackInput):
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM predictions WHERE prediction_id = ?
+    """, (data.prediction_id,))
+    
+    exists = cursor.fetchone()[0]
+
+    if exists == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prediction ID not found")
+
+    cursor.execute("""
+        UPDATE predictions
+        SET actual = ?
+        WHERE prediction_id = ?
+    """, (data.actual_price, data.prediction_id))
+
+    conn.commit()
+    conn.close()
+
+    metrics = compute_metrics()
+
+    return {
+        "message": "Feedback recorded successfully",
+        "updated_metrics": {
+            "mae": metrics.get("mae"),
+            "robust_mae": metrics.get("robust_mae"),
+            "median_error": metrics.get("median_error"),
+            "count": metrics.get("count")
+        }
     }
