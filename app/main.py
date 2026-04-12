@@ -11,8 +11,12 @@ import requests
 import sqlite3
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, validator
 
+# ============================
+# PATH FIX
+# ============================
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.drift_detection import check_drift
@@ -20,6 +24,9 @@ from src.performance_monitor import compute_metrics
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# ============================
+# APP INIT
+# ============================
 app = FastAPI(title="Used Car Price Prediction API")
 
 MODEL_PATH = "models/model.pkl"
@@ -32,7 +39,92 @@ last_loaded_time = 0
 
 
 # ============================
-# MODEL AUTO-RELOAD (🔥 KEY FIX)
+# UI ROUTE (🔥 NEW)
+# ============================
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <html>
+    <head>
+        <title>Used Car Price Prediction</title>
+        <style>
+            body {
+                font-family: Arial;
+                background: #0f172a;
+                color: white;
+                text-align: center;
+                padding: 40px;
+            }
+            input {
+                padding: 10px;
+                margin: 8px;
+                width: 220px;
+                border-radius: 5px;
+                border: none;
+            }
+            button {
+                padding: 10px 20px;
+                background: #22c55e;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            .box {
+                background: #1e293b;
+                padding: 30px;
+                border-radius: 10px;
+                display: inline-block;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h1>🚗 Used Car Price Prediction</h1>
+
+        <div class="box">
+            <input id="vehicle_age" placeholder="Vehicle Age"><br>
+            <input id="km_driven" placeholder="KM Driven"><br>
+            <input id="mileage" placeholder="Mileage"><br>
+            <input id="engine" placeholder="Engine"><br>
+            <input id="max_power" placeholder="Max Power"><br>
+            <input id="seats" placeholder="Seats"><br>
+
+            <button onclick="predict()">Predict</button>
+
+            <h2 id="result"></h2>
+        </div>
+
+        <script>
+        async function predict() {
+            const data = {
+                vehicle_age: parseFloat(document.getElementById("vehicle_age").value),
+                km_driven: parseFloat(document.getElementById("km_driven").value),
+                mileage: parseFloat(document.getElementById("mileage").value),
+                engine: parseFloat(document.getElementById("engine").value),
+                max_power: parseFloat(document.getElementById("max_power").value),
+                seats: parseFloat(document.getElementById("seats").value)
+            };
+
+            const res = await fetch('/predict', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+
+            const result = await res.json();
+
+            document.getElementById("result").innerText =
+                "Predicted Price: ₹ " + result.predicted_price.toFixed(2);
+        }
+        </script>
+    </body>
+    </html>
+    """
+
+
+# ============================
+# MODEL AUTO-RELOAD
 # ============================
 def reload_model_if_updated():
     global model, last_loaded_time
@@ -102,20 +194,6 @@ def insert_prediction(data, prediction_id, prediction, shadow_prediction):
     conn.close()
 
 
-def update_feedback(prediction_id, actual):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE predictions
-        SET actual = ?
-        WHERE prediction_id = ?
-    """, (actual, prediction_id))
-
-    conn.commit()
-    conn.close()
-
-
 # ============================
 # STARTUP
 # ============================
@@ -124,7 +202,6 @@ def load_models():
     global model, shadow_model, last_loaded_time
 
     print("🚀 Starting API...")
-
     init_db()
 
     if os.path.exists(MODEL_PATH):
@@ -135,11 +212,6 @@ def load_models():
     if os.path.exists(SHADOW_MODEL_PATH):
         with open(SHADOW_MODEL_PATH, "rb") as f:
             shadow_model = pickle.load(f)
-
-
-@app.get("/healthz")
-def health():
-    return {"status": "ok"}
 
 
 # ============================
@@ -156,10 +228,9 @@ def trigger_retraining():
     url = f"https://api.github.com/repos/{repo}/dispatches"
 
     headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json"
-    }
-
+    "Authorization": f"Bearer {token}",
+    "Accept": "application/vnd.github+json"
+}
     data = {"event_type": "retrain_model"}
 
     response = requests.post(url, headers=headers, json=data)
@@ -171,7 +242,7 @@ def trigger_retraining():
 
 
 # ============================
-# INPUT SCHEMA
+# SCHEMAS
 # ============================
 class CarFeatures(BaseModel):
     vehicle_age: int = Field(..., ge=0, le=20)
@@ -180,17 +251,6 @@ class CarFeatures(BaseModel):
     engine: float = Field(..., ge=500, le=5000)
     max_power: float = Field(..., ge=20, le=500)
     seats: int = Field(..., ge=2, le=8)
-
-
-class FeedbackInput(BaseModel):
-    prediction_id: str
-    actual_price: float
-
-    @validator("actual_price")
-    def validate_price(cls, v):
-        if not (20000 <= v <= 2000000):
-            raise ValueError("Unrealistic price value")
-        return v
 
 
 # ============================
@@ -203,7 +263,6 @@ def predict(data: CarFeatures):
     if model is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
-    # 🔄 Reload model if retrained
     reload_model_if_updated()
 
     input_df = pd.DataFrame([data.dict()])
@@ -212,8 +271,7 @@ def predict(data: CarFeatures):
 
     shadow_prediction = None
     if shadow_model is not None:
-        base_shadow = float(np.expm1(shadow_model.predict(input_df)[0]))
-        shadow_prediction = base_shadow * np.random.uniform(0.9, 1.1)
+        shadow_prediction = float(np.expm1(shadow_model.predict(input_df)[0]))
 
     prediction_id = str(uuid.uuid4())
 
@@ -223,7 +281,6 @@ def predict(data: CarFeatures):
     metrics = compute_metrics()
 
     if drift_result.get("drift_detected"):
-        print("🚀 Triggering retraining...")
         trigger_retraining()
 
     return {
@@ -234,45 +291,4 @@ def predict(data: CarFeatures):
         "mae": metrics.get("mae"),
         "robust_mae": metrics.get("robust_mae"),
         "median_error": metrics.get("median_error")
-    }
-
-
-# ============================
-# FEEDBACK
-# ============================
-@app.post("/feedback")
-def add_feedback(data: FeedbackInput):
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT COUNT(*) FROM predictions WHERE prediction_id = ?
-    """, (data.prediction_id,))
-    
-    exists = cursor.fetchone()[0]
-
-    if exists == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Prediction ID not found")
-
-    cursor.execute("""
-        UPDATE predictions
-        SET actual = ?
-        WHERE prediction_id = ?
-    """, (data.actual_price, data.prediction_id))
-
-    conn.commit()
-    conn.close()
-
-    metrics = compute_metrics()
-
-    return {
-        "message": "Feedback recorded successfully",
-        "updated_metrics": {
-            "mae": metrics.get("mae"),
-            "robust_mae": metrics.get("robust_mae"),
-            "median_error": metrics.get("median_error"),
-            "count": metrics.get("count")
-        }
     }
